@@ -153,6 +153,8 @@ pub struct SnoutApp {
     was_focused: bool,
     title: String,
     console: Console,
+    /// The repository list and current repository as last written to disk.
+    persisted: (Vec<PathBuf>, Option<PathBuf>),
 }
 
 impl SnoutApp {
@@ -186,7 +188,9 @@ impl SnoutApp {
             was_focused: true,
             title: String::new(),
             console: Console::default(),
+            persisted: (Vec::new(), None),
         };
+        app.persisted = (app.settings.repos.clone(), app.settings.current.clone());
         if let Some(path) = open_arg {
             app.open_path(&path);
         } else if let Some(path) = app.settings.current.clone() {
@@ -606,6 +610,20 @@ impl SnoutApp {
                 .map_err(|e| e.to_string()),
         );
         self.diff_key = Some(key);
+    }
+
+    /// Write the settings as soon as the repository list or the current repository
+    /// changes, instead of waiting for eframe's periodic save, so a crash or a forced
+    /// quit cannot lose them.
+    fn persist_repos(&mut self, frame: &mut eframe::Frame) {
+        if self.persisted.0 == self.settings.repos && self.persisted.1 == self.settings.current {
+            return;
+        }
+        if let Some(storage) = frame.storage_mut() {
+            eframe::set_value(storage, eframe::APP_KEY, &self.settings);
+            storage.flush();
+        }
+        self.persisted = (self.settings.repos.clone(), self.settings.current.clone());
     }
 
     fn update_title(&mut self, ctx: &egui::Context) {
@@ -1271,7 +1289,7 @@ impl SnoutApp {
 }
 
 impl eframe::App for SnoutApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll_job();
         self.auto_refresh(&ctx);
@@ -1331,9 +1349,11 @@ impl eframe::App for SnoutApp {
             self.handle(action, &ctx);
         }
         self.update_title(&ctx);
+        self.persist_repos(frame);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.persisted = (self.settings.repos.clone(), self.settings.current.clone());
         eframe::set_value(storage, eframe::APP_KEY, &self.settings);
     }
 }
