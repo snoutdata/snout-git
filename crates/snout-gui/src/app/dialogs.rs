@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Key, RichText};
-use snout_core::{Branch, BranchKind, CheckoutTarget, FileEntry, LocalChanges, Tag};
+use snout_core::{Branch, BranchKind, CheckoutTarget, FileEntry, LocalChanges, PullMode, PullProblem, Tag};
 
 use super::{Action, SnoutApp, repo_dir_name};
 
@@ -25,6 +25,11 @@ pub(super) enum Dialog {
     DeleteBranch {
         name: String,
         force: bool,
+    },
+    /// A pull could not combine the local and remote branches.
+    PullProblem {
+        problem: PullProblem,
+        details: String,
     },
     /// A folder that is not a repository was opened.
     InitRepo(PathBuf),
@@ -106,6 +111,9 @@ fn pick_items(branches: &[Branch], tags: &[Tag], query: &str, commit: Option<&st
 impl SnoutApp {
     pub(super) fn dialogs(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let has_changes = !self.status.files.is_empty();
+        let has_tracked_changes = self.has_tracked_changes();
+        let branch = self.status.branch.head.clone().unwrap_or_else(|| "HEAD".into());
+        let upstream = self.status.branch.upstream.clone().unwrap_or_else(|| "its upstream".into());
         let Some(dialog) = &mut self.dialog else { return };
         let (branches, tags, repo) = (&self.branches, &self.tags, self.repo.as_ref());
         let mut close = false;
@@ -120,6 +128,70 @@ impl SnoutApp {
                     });
                     ui.add_space(8.0);
                     close = ui.button("OK").clicked() || ui.input(|i| i.key_pressed(Key::Enter));
+                }
+                Dialog::PullProblem { problem, details } => {
+                    match problem {
+                        PullProblem::Divergent => {
+                            ui.heading("Both sides have new commits");
+                            ui.label(format!(
+                                "{branch} and {upstream} have each moved on, and this repository's settings do not say \
+                                 how to combine them."
+                            ));
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button("Merge")
+                                    .on_hover_text("git pull --no-rebase: adds a merge commit")
+                                    .clicked()
+                                {
+                                    actions.push(Action::Pull(PullMode::Merge));
+                                    close = true;
+                                }
+                                if ui
+                                    .button("Rebase")
+                                    .on_hover_text("git pull --rebase: replays your commits on top of the remote ones")
+                                    .clicked()
+                                {
+                                    actions.push(Action::Pull(PullMode::Rebase));
+                                    close = true;
+                                }
+                                close |= ui.button("Cancel").clicked();
+                            });
+                        }
+                        PullProblem::Unrelated => {
+                            ui.heading("No shared history");
+                            ui.label(format!(
+                                "{branch} and {upstream} have no commit in common, so they cannot be merged. This \
+                                 usually means the remote repository was recreated or its history was rewritten."
+                            ));
+                            ui.label(format!(
+                                "Resetting makes {branch} match {upstream} exactly. Your current commits stay on a \
+                                 backup branch, so nothing is lost."
+                            ));
+                            if has_tracked_changes {
+                                ui.colored_label(
+                                    ui.visuals().warn_fg_color,
+                                    "Commit or stash your uncommitted changes first; resetting would discard them.",
+                                );
+                            }
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                let reset = ui.add_enabled(
+                                    !has_tracked_changes,
+                                    egui::Button::new(format!("Reset to {upstream}")),
+                                );
+                                if reset.clicked() {
+                                    actions.push(Action::ResetToUpstream);
+                                    close = true;
+                                }
+                                close |= ui.button("Cancel").clicked();
+                            });
+                        }
+                    }
+                    ui.add_space(4.0);
+                    egui::CollapsingHeader::new("Details from git").show(ui, |ui| {
+                        ui.label(RichText::new(details.as_str()).monospace().small());
+                    });
                 }
                 Dialog::Info { title, text } => {
                     ui.heading(title.as_str());

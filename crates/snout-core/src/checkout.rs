@@ -129,7 +129,7 @@ impl Repo {
         Ok(out.success.then(|| out.stdout_str().trim().to_owned()))
     }
 
-    fn ref_exists(&self, full_ref: &str) -> Result<bool> {
+    pub(crate) fn ref_exists(&self, full_ref: &str) -> Result<bool> {
         Ok(run_raw(self.root(), &["show-ref", "--verify", "-q", full_ref], None)?.success)
     }
 

@@ -5,7 +5,10 @@ use std::sync::mpsc;
 use eframe::egui::{self, Color32, Key, RichText, Sense};
 use egui_extras::{Column, TableBuilder};
 use serde::{Deserialize, Serialize};
-use snout_core::{Branch, BranchKind, CheckoutTarget, Commit, DiffBase, FileEntry, LocalChanges, Repo, Status, Tag};
+use snout_core::{
+    Branch, BranchKind, CheckoutTarget, Commit, DiffBase, FileEntry, LocalChanges, PullMode, PullProblem, Repo, Status,
+    Tag,
+};
 
 use crate::diff_view::DiffView;
 use console::{Console, ConsoleEvent};
@@ -96,7 +99,9 @@ enum Action {
         force: bool,
     },
     Fetch,
-    Pull,
+    Pull(PullMode),
+    /// Make the current branch match its upstream, keeping a backup branch.
+    ResetToUpstream,
     Push,
     OpenGithub,
     ToggleConsole,
@@ -352,7 +357,14 @@ impl SnoutApp {
                 self.message = format!("Cloned into {}", root.display());
             }
             Ok(JobOutcome::Found { root, repos }) => self.add_found(&root, repos),
-            Err(e) => self.fail(format!("{label} failed:\n{e}")),
+            Err(e) => match PullProblem::from_error(&e).filter(|_| label.starts_with("Pull")) {
+                Some(problem) => {
+                    self.message = format!("{label} failed");
+                    self.log_output(e.clone(), true);
+                    self.dialog = Some(Dialog::PullProblem { problem, details: e });
+                }
+                None => self.fail(format!("{label} failed:\n{e}")),
+            },
         }
         self.refresh();
     }
@@ -498,9 +510,31 @@ impl SnoutApp {
                 let repo = repo.unwrap();
                 self.spawn(ctx, "Fetch", move || repo.fetch().map(JobOutcome::Done));
             }
-            Action::Pull => {
+            Action::Pull(mode) => {
                 let repo = repo.unwrap();
-                self.spawn(ctx, "Pull", move || repo.pull().map(JobOutcome::Done));
+                let label = match mode {
+                    PullMode::Default => "Pull",
+                    PullMode::Merge => "Pull (merge)",
+                    PullMode::Rebase => "Pull (rebase)",
+                };
+                self.spawn(ctx, label, move || repo.pull_with(mode).map(JobOutcome::Done));
+            }
+            Action::ResetToUpstream => {
+                let upstream = self.status.branch.upstream.clone().unwrap_or_default();
+                let head = self.status.branch.head.clone().unwrap_or_default();
+                match repo.unwrap().reset_to_upstream() {
+                    Ok(backup) => {
+                        self.done(format!("Reset {head} to {upstream}"));
+                        self.dialog = Some(Dialog::Info {
+                            title: format!("{head} now matches {upstream}"),
+                            text: format!(
+                                "Your previous commits are kept on the branch {backup}. Delete it once you no longer need them."
+                            ),
+                        });
+                    }
+                    Err(e) => self.fail(e.to_string()),
+                }
+                self.refresh();
             }
             Action::Push => {
                 let repo = repo.unwrap();
@@ -654,7 +688,7 @@ impl SnoutApp {
             ui.separator();
             let net = has_repo && idle;
             if ui.add_enabled(net, egui::Button::new("⬇ Pull")).on_hover_text("git pull").clicked() {
-                actions.push(Action::Pull);
+                actions.push(Action::Pull(PullMode::Default));
             }
             if ui.add_enabled(net, egui::Button::new("⟲ Fetch")).on_hover_text("git fetch --all --prune").clicked() {
                 actions.push(Action::Fetch);

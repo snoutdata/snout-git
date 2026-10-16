@@ -251,10 +251,6 @@ impl Repo {
         Ok(self.git(&["fetch", "--all", "--prune"])?.text())
     }
 
-    pub fn pull(&self) -> Result<String> {
-        Ok(self.git(&["pull"])?.text())
-    }
-
     /// Push the current branch, setting the upstream on first push.
     pub fn push(&self) -> Result<String> {
         let status = self.status()?;

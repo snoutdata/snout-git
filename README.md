@@ -14,7 +14,7 @@ A small, fast desktop Git client in Rust. It focuses on the everyday loop: see w
 - **Check out:** a ⇧⌘O picker over local branches, remote branches and tags, or any commit you type (a SHA, `HEAD~2`), with a live preview. With uncommitted changes you choose to keep them or to stash, check out and re-apply. If re-applying conflicts, the stash is kept so nothing is lost.
 - **Branches:** local branches, branches per remote, and tags, with ahead/behind counts and a detached HEAD indicator. Create a branch from any branch, tag or commit; delete one (with a force option).
 - **Journal:** recent commits with branch and tag badges and unpushed markers. Right-click a commit to check it out or start a branch there.
-- **Remote:** pull, fetch (all remotes, with prune) and push. The first push sets the upstream.
+- **Remote:** pull, fetch (all remotes, with prune) and push. The first push sets the upstream. When a pull cannot combine the branches, snout says why and offers a way forward: merge or rebase when both sides have new commits, or reset to the remote (keeping your commits on a backup branch) when the remote's history was replaced.
 - **GitHub:** opens the repository on github.com.
 - **Claude Code console:** see below.
 
@@ -114,7 +114,7 @@ The console is `portable-pty` plus the `vt100` parser, painted with egui. It ans
 | `commit` | `Repo::commit` |
 | `branches`, `tags`, `checkout`, `create_branch`, `delete_branch` | same names |
 | `log` | `Repo::log` |
-| `fetch`, `pull`, `push` | same names |
+| `fetch`, `pull`, `push`, `reset_to_upstream` | same names (`pull_with` takes merge or rebase) |
 
 Since the GUI re-reads state from Git rather than caching it, changes an agent makes show up in the GUI. Console sessions will get these tools through `claude --mcp-config`.
 

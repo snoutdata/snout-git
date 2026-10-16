@@ -109,6 +109,57 @@ fn directory_tree_narrows_the_file_list() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A clone whose remote was then replaced by an unrelated history.
+fn clone_of_replaced_remote(name: &str) -> (PathBuf, PathBuf) {
+    let root = scratch_dir(name);
+    let remote = root.join("remote.git");
+    git(&root, &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+    for (dir, file) in [("old", "old.txt"), ("new", "new.txt")] {
+        let d = root.join(dir);
+        std::fs::create_dir_all(&d).unwrap();
+        git(&d, &["init", "-q", "-b", "main"]);
+        git(&d, &["config", "user.name", "Demo"]);
+        git(&d, &["config", "user.email", "demo@example.com"]);
+        git(&d, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(d.join(file), "x\n").unwrap();
+        git(&d, &["add", "-A"]);
+        git(&d, &["commit", "-qm", file]);
+        if dir == "old" {
+            git(&d, &["push", "-q", remote.to_str().unwrap(), "main"]);
+            git(&root, &["clone", "-q", remote.to_str().unwrap(), "local"]);
+        } else {
+            git(&d, &["push", "-q", "--force", remote.to_str().unwrap(), "main"]);
+        }
+    }
+    let local = root.join("local");
+    git(&local, &["config", "commit.gpgsign", "false"]);
+    git(&local, &["fetch", "-q"]);
+    (root, local)
+}
+
+fn wait_for_job(h: &mut Harness<'_, SnoutApp>) {
+    wait_until(h, "the job to finish", |app| app.job.is_none());
+    h.run_steps(2);
+}
+
+#[test]
+fn pull_from_a_replaced_remote_offers_a_reset() {
+    let (root, local) = clone_of_replaced_remote("replaced");
+    let mut h = harness(Some(local.clone()));
+    let ctx = h.ctx.clone();
+    h.state_mut().handle(Action::Pull(PullMode::Merge), &ctx);
+    wait_for_job(&mut h);
+    assert!(matches!(h.state().dialog, Some(Dialog::PullProblem { problem: PullProblem::Unrelated, .. })));
+    screenshot(&mut h, "-unrelated");
+
+    h.get_by_label("Reset to origin/main").click();
+    h.run_steps(3);
+    assert!(matches!(&h.state().dialog, Some(Dialog::Info { title, .. }) if title == "main now matches origin/main"));
+    assert!(local.join("new.txt").exists() && !local.join("old.txt").exists());
+    assert!(h.state().branches.iter().any(|b| b.name.starts_with("backup/main-")), "backup branch listed");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn welcome_screen_without_repo() {
     let mut h = harness(None);
